@@ -16,3 +16,4 @@ libraryDependencies += "org.apache.spark" %% "spark-sql" % "2.3.0"
 libraryDependencies += "mysql" % "mysql-connector-java" % "5.1.12"
 // https://mvnrepository.com/artifact/com.typesafe/config
 libraryDependencies += "com.typesafe" % "config" % "1.3.3"
+libraryDependencies += "redis.clients" % "jedis" % "2.9.0"

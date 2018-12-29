@@ -1,14 +1,23 @@
 package db
 import java.util.Properties
 
+import com.typesafe.config.ConfigFactory
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.sql.{DataFrame, Row, SaveMode, SparkSession}
 import utils.UUIDEvaluator
 
 import scala.collection.mutable.ListBuffer
 
 object MySQLUtils {
-    type MySQLTable = DataFrame
-
+  val conf = ConfigFactory.load()
+  val serverUrl = conf.getString("database.url")
+  val user = conf.getString("database.user")
+  val passwd = conf.getString("database.password")
+  val driverName = conf.getString("database.driver.name")
+  val driverType = conf.getString("database.driver.type")
+  type MySQLTable = DataFrame
+  val uuid: UUIDEvaluator = UUIDEvaluator.getInstance()
   /**
     *
     * @param ss sparkSession
@@ -18,14 +27,14 @@ object MySQLUtils {
     * @param tbName table name(db should be specific in url)
     * @return
     */
-  def openTable (ss : SparkSession, serverUrl : String, user:String , password : String, tbName : String, driverName : String, driverType : String) : MySQLTable = {
+  def openTable (ss : SparkSession, tbName : String) : MySQLTable = {
     ss.sqlContext.read
       .format(driverType)
       .option("url", serverUrl)
       .option("dbtable",tbName)
       .option("user", user)
       .option("driver", driverName)
-      .option("password", password)
+      .option("password", passwd)
       .load
   }
   def rowChangeValue(row : Row, index : Int, value : String) : Row ={
@@ -33,6 +42,16 @@ object MySQLUtils {
     var i = 0
     for (v <- row.toSeq.toList) {
       if (i == index) li += value
+      else li += v
+      i += 1
+    }
+    Row.fromSeq(li)
+  }
+  def rowMappingValue(row : Row, index : Int, map :  Map[String,String]) : Row ={
+    val li = ListBuffer[Any]()
+    var i = 0
+    for (v <- row.toSeq.toList) {
+      if (i == index) li += map.getOrElse(v.asInstanceOf[String] ,v)
       else li += v
       i += 1
     }
@@ -95,10 +114,99 @@ object MySQLUtils {
   //set an uuid long in head of row
   //side effect will occur
   def rowBuildID(row : Row, uuid: UUIDEvaluator) : Row = {
-    Row.fromSeq(Seq(uuid.getId(1)) ++ row.toSeq)
+    Row.fromSeq(Seq(String.valueOf(uuid.getId(1))) ++ row.toSeq)
   }
 
-  def rowMerge(mainRows : MySQLTable, insertRows: MySQLTable, fieldNames : String*) : MySQLTable = ???
+  def schemaMapping(schema : StructType, map: Map[String, String]) : StructType = {
+    new StructType(
+      schema.map(s => StructField(map.getOrElse(s.name, s.name.toUpperCase), s.dataType, s.nullable)).toArray
+    )
+  }
+  def rowMerge(ss : SparkSession, mainRows : MySQLTable, insertRows: MySQLTable,productIdName : String, psnIdName : String, orgName : String, fieldNames : String*) : (MySQLTable, MySQLTable, MySQLTable) = {
+    val newSchema = mainRows.schema
+    println()
+    newSchema.foreach(s => println(s.name))
+    println("---------")
+    val oldSchema = insertRows.schema
+    oldSchema.foreach(s => println(s.name))
+    val mainFieldIndex = fieldNames.map(s => newSchema.fieldIndex(s))
+    val insertFieldIndex = fieldNames.map(s => oldSchema.fieldIndex(s))
+    val productIndex = oldSchema.fieldIndex(productIdName)
+    val idIndex = newSchema.fieldIndex(psnIdName)
+    val orgIndex = oldSchema.fieldIndex(orgName)
+    val mainRdd : RDD[Row] = mainRows.rdd.map(r => {
+      if(r.getAs[String](psnIdName) == "") rowChangeValue(r, idIndex, String.valueOf(uuid.getId(0)))
+      else r
+    })
+    val show = insertRows.rdd.map(row =>
+      (buildHash(insertFieldIndex.map(row.getAs[String]) : _*) ,(
+      buildRow(row, oldSchema, newSchema), false,
+      row.getAs[String](productIndex), row.getAs[String](orgIndex)
+    ))).take(10)
+    show.foreach(a => println(a._2._1))
+    val tmp = insertRows
+      .rdd
+      .map(row =>
+        (buildHash(insertFieldIndex.map(row.getAs[String]) : _*) ,
+        ( buildRow(row, oldSchema, newSchema), false,
+          row.getAs[String](productIndex),
+          row.getAs[String](orgIndex)
+        )))
+      .union(mainRdd
+        .map(row => (buildHash(mainFieldIndex.map(row.getAs[String]) : _*) ,(row, true, row.getAs[String](productIndex),row.getAs[String](orgIndex))))
+      ).groupByKey
+      .values
+      .map(a => combineRow(a))
+
+    val proRel = tmp.map(a => (a._1.getAs[String](idIndex), a._2))
+        .map(a => {
+          a._2.map((a._1,_)) //psn -> product
+        }).flatMap(_.toList).map(s => Row.fromSeq(Seq(s._1, s._2)))
+    val orgRel = tmp.map(a => (a._1.getAs[String](idIndex), a._3))
+      .map(a => {
+        a._2.map((a._1,_)) //psn -> product
+      }).flatMap(_.toList).map(s => Row.fromSeq(Seq(s._1, s._2)))
+    (
+      ss.createDataFrame(tmp.map(_._1), newSchema),  //spec row
+      ss.createDataFrame(proRel, new StructType(Array(psnIdName, productIdName).map(s => StructField(s, StringType, nullable = true)))), //rel row
+      ss.createDataFrame(orgRel, new StructType(Array(psnIdName, orgName).map(s => StructField(s, StringType, nullable = true))))
+    )
+  }
+
+  def combineRow(iterable: Iterable[(Row, Boolean, String, String)]) : (Row, Set[String], Set[String]) = {
+    val li = iterable.toList
+    var set = Set[String]()
+    var set_2 = Set[String]()
+    val row = li.reduce((a, b) => {
+      if (a._2) {
+        set += b._3
+        set_2 += b._4
+        a
+      } else if (b._2) {
+        set += a._3
+        set_2 += b._4
+        b
+      } else {
+        set += b._3
+        set_2 += b._4
+        a
+      }
+    })
+    (row._1, set,set_2)
+  }
+
+  def buildRow(row: Row, oldSchema : StructType, newSchema: StructType) : Row = {
+    val seq : Seq[String]= for (str <- newSchema) yield {
+      if (oldSchema.contains(str)) {
+        row.getAs[String](str.name)
+      } else null
+    }
+    Row.fromSeq(seq)
+  }
+
+  def buildHash(fields : String *): Int = {
+    fields.foldLeft("")(_ + _).hashCode
+  }
 
   def saveTable(df : MySQLTable, table: String,
                 serverUrl : String, driverType : String,
@@ -110,16 +218,13 @@ object MySQLUtils {
   }
 
   def saveTable(df : MySQLTable, table: String,
-                serverUrl : String, driverType : String,
-                user:String , password : String, driverName : String , mode : SaveMode): Unit = {
+               mode : SaveMode): Unit = {
     val prop = new Properties()
     prop.put("url", serverUrl)
     prop.put("dbtable",table)
     prop.put("user", user)
     prop.put("driver", driverName)
-    prop.put("password", password)
+    prop.put("password", passwd)
     saveTable(df, table, serverUrl, driverType, prop, mode)
   }
-
-
 }
