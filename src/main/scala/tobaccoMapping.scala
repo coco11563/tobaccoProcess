@@ -129,11 +129,8 @@ object tobaccoMapping {
       .map(MySQLUtils.rowBuildID(_, uuid))
       .map(MySQLUtils.buildRow(_, orgDupSchemaOld, orgSchema))
     val orgRDD = orgDupTable.union(initORGDupTable.rdd)
-//    val orgRDDAfterDup = orgRDD.map(r => (MySQLUtils.buildHash(r.getAs[String](orgName)), r))
-//      .groupByKey()
-//      .mapValues(r => r.head)
 
-    val orgTable = sparkSession.createDataFrame(orgDupTable.union(initORGDupTable.rdd), orgSchema).dropDuplicates(orgName)
+    val orgTable = sparkSession.createDataFrame(orgRDD, orgSchema).dropDuplicates(orgName)
 
     MySQLUtils.saveTable(psnTable,outputPSNTableName,SaveMode.Overwrite)
     MySQLUtils.saveTable(proRelTable,outputPSNPRORelTableName,SaveMode.Overwrite)
