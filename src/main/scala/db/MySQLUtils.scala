@@ -1,29 +1,28 @@
 package db
 import java.util.Properties
 
-import com.typesafe.config.ConfigFactory
+import com.typesafe.config.{Config, ConfigFactory}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
-import org.apache.spark.sql.{DataFrame, Row, SaveMode, SparkSession}
+import org.apache.spark.sql._
 import utils.UUIDEvaluator
 
 import scala.collection.mutable.ListBuffer
 
 object MySQLUtils {
-  val conf = ConfigFactory.load()
-  val serverUrl = conf.getString("database.url")
-  val user = conf.getString("database.user")
-  val passwd = conf.getString("database.password")
-  val driverName = conf.getString("database.driver.name")
-  val driverType = conf.getString("database.driver.type")
+  val conf: Config = ConfigFactory.load()
+  val serverUrl: String = conf.getString("database.url")
+  val user: String = conf.getString("database.user")
+  val passwd: String = conf.getString("database.password")
+  val driverName: String = conf.getString("database.driver.name")
+  val driverType: String = conf.getString("database.driver.type")
   type MySQLTable = DataFrame
+  type DuplicatedFunction = (MySQLTable, String *) => MySQLTable
+  type RecordFunction = (String, String) => Unit
   val uuid: UUIDEvaluator = UUIDEvaluator.getInstance()
   /**
     *
     * @param ss sparkSession
-    * @param serverUrl mysql URL
-    * @param user mysql Username
-    * @param password mysql Password
     * @param tbName table name(db should be specific in url)
     * @return
     */
@@ -122,6 +121,7 @@ object MySQLUtils {
       schema.map(s => StructField(map.getOrElse(s.name, s.name.toUpperCase), s.dataType, s.nullable)).toArray
     )
   }
+
   def rowMerge(ss : SparkSession, mainRows : MySQLTable, insertRows: MySQLTable,productIdName : String, psnIdName : String, orgName : String, fieldNames : String*) : (MySQLTable, MySQLTable, MySQLTable) = {
     val newSchema = mainRows.schema
     println()
@@ -226,5 +226,31 @@ object MySQLUtils {
     prop.put("driver", driverName)
     prop.put("password", passwd)
     saveTable(df, table, serverUrl, driverType, prop, mode)
+  }
+
+  def dfSelect(df : MySQLTable, field : Seq[String]) : MySQLTable = {
+    df.select(field.map(new Column(_)) : _*)
+  }
+
+  def dfSelect(df : MySQLTable, field : String *) : MySQLTable = {
+    df.select(field.map(new Column(_)) : _*)
+  }
+
+  def dfSchemaMapping(df : MySQLTable, map : Map[String, String]) : MySQLTable = {
+    val schema = schemaMapping(df.schema, map)
+    df.sqlContext.createDataFrame(df.rdd, schema)
+  }
+
+  def dfMerge(thisTable : MySQLTable, otherTable : MySQLTable) : MySQLTable = ???
+
+  def dfMerge(thisTable : MySQLTable, otherTable : MySQLTable, duplicateFunction : DuplicatedFunction) : DataFrame = ???
+
+  def dfMerge(thisTable : MySQLTable, otherTable : MySQLTable, duplicateFunction : DuplicatedFunction, recordFunction : RecordFunction) : DataFrame = ???
+
+  def dfSelectMerge(df1 : MySQLTable, strNeed1 : Seq[String], df2 : MySQLTable, strNeed2 : Seq[String], fieldMap : Map[String, String]) : MySQLTable = {
+    val dataFrame = dfSelect(df1, strNeed1)
+    val dataFrame2 = dfSelect(df2, strNeed2)
+    val dataFrame3 = dfSchemaMapping(dataFrame, fieldMap)
+    dfMerge(dataFrame2, dataFrame3)
   }
 }
