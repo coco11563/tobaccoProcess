@@ -1,11 +1,11 @@
-package db
+package utils
+
 import java.util.Properties
 
 import com.typesafe.config.{Config, ConfigFactory}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
-import org.apache.spark.sql._
-import utils.UUIDEvaluator
+import org.apache.spark.sql.{DataFrame, Row, SaveMode, SparkSession}
 
 import scala.collection.mutable.ListBuffer
 
@@ -16,9 +16,11 @@ object MySQLUtils {
   val passwd: String = conf.getString("database.password")
   val driverName: String = conf.getString("database.driver.name")
   val driverType: String = conf.getString("database.driver.type")
+
   type MySQLTable = DataFrame
   type DuplicatedFunction = (MySQLTable, String *) => MySQLTable
   type RecordFunction = (String, String) => Unit
+
   val uuid: UUIDEvaluator = UUIDEvaluator.getInstance()
   /**
     *
@@ -228,29 +230,4 @@ object MySQLUtils {
     saveTable(df, table, serverUrl, driverType, prop, mode)
   }
 
-  def dfSelect(df : MySQLTable, field : Seq[String]) : MySQLTable = {
-    df.select(field.map(new Column(_)) : _*)
-  }
-
-  def dfSelect(df : MySQLTable, field : String *) : MySQLTable = {
-    df.select(field.map(new Column(_)) : _*)
-  }
-
-  def dfSchemaMapping(df : MySQLTable, map : Map[String, String]) : MySQLTable = {
-    val schema = schemaMapping(df.schema, map)
-    df.sqlContext.createDataFrame(df.rdd, schema)
-  }
-
-  def dfMerge(thisTable : MySQLTable, otherTable : MySQLTable) : MySQLTable = ???
-
-  def dfMerge(thisTable : MySQLTable, otherTable : MySQLTable, duplicateFunction : DuplicatedFunction) : DataFrame = ???
-
-  def dfMerge(thisTable : MySQLTable, otherTable : MySQLTable, duplicateFunction : DuplicatedFunction, recordFunction : RecordFunction) : DataFrame = ???
-
-  def dfSelectMerge(df1 : MySQLTable, strNeed1 : Seq[String], df2 : MySQLTable, strNeed2 : Seq[String], fieldMap : Map[String, String]) : MySQLTable = {
-    val dataFrame = dfSelect(df1, strNeed1)
-    val dataFrame2 = dfSelect(df2, strNeed2)
-    val dataFrame3 = dfSchemaMapping(dataFrame, fieldMap)
-    dfMerge(dataFrame2, dataFrame3)
-  }
 }

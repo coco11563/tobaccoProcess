@@ -1,11 +1,8 @@
-import java.io.{File, FileReader}
-import java.util.Properties
-
 import com.typesafe.config.{Config, ConfigFactory}
-import db.MySQLUtils
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{Column, SaveMode, SparkSession}
+import utils.MySQLUtils
 
 class tobaccoMapping {
 
