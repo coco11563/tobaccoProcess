@@ -196,7 +196,9 @@ object MySQLUtils {
     })
     (row._1, set,set_2)
   }
-
+  def getTableSchema(sparkSession: SparkSession, tableName : String) : StructType = {
+    openTable(sparkSession, tableName).schema
+  }
   def buildRow(row: Row, oldSchema : StructType, newSchema: StructType) : Row = {
     val seq : Seq[String]= for (str <- newSchema) yield {
       if (oldSchema.contains(str)) {
@@ -207,7 +209,7 @@ object MySQLUtils {
   }
 
   def buildHash(fields : String *): Int = {
-    fields.foldLeft("")(_ + _).hashCode
+    fields.foldLeft("")(_ + _).##
   }
 
   def saveTable(df : MySQLTable, table: String,
@@ -218,7 +220,14 @@ object MySQLUtils {
       .format(driverType)
       .jdbc(serverUrl, table, prop)
   }
-
+  def saveCsv(df : MySQLTable, outName : String ) : Unit = {
+    df.write
+      .option("header","true")
+      .option("delimiter","\t")
+      .option("quoteMode", "NON_NUMERIC")
+      .option("quote","\"")
+      .csv(outName)
+  }
   def saveTable(df : MySQLTable, table: String,
                mode : SaveMode): Unit = {
     val prop = new Properties()

@@ -5,7 +5,10 @@ import org.apache.spark.sql.types._
 
 object ConfigUtils {
   implicit def mapConfigImplicit(string: String) : Map[String, String] = {
-    string.split(",").map(_.split("->")).map(arr => (arr(0), arr(1))).toMap
+    if (string eq "")
+      Map[String,String]()
+    else
+      string.split(",").map(_.split("->")).map(arr => (arr(0), arr(1))).toMap
   }
 
   implicit def arrMapConfigImplicit(arr: String) : List[Map[String, String]] = {
@@ -33,6 +36,7 @@ object ConfigUtils {
     val t = string.split(",")
     StructField(t(0), structTypeImplicit(t(1)), booleanConvert(t(2)))
   }
+
   implicit def schemaConfigImplicit(string: String) : StructType = {
     StructType(string
       .split(";")
