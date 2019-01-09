@@ -76,13 +76,40 @@ object Process {
     val mappingTable : Boolean = config
       .getBoolean(s"$processName.mapping.isNeed")
 
-    val finalSchema : StructType = if (tableSchema.contains(",")) tableSchema else MySQLUtils.getTableSchema(sparkSession, tableSchema)
-
-    var dfOrigin : DataFrame = sparkSession.createDataFrame(sparkSession.sparkContext.emptyRDD[Row], finalSchema)
-
     val mappingField : Map[String,String] =
       if (fieldMapName == "") Map[String,String]()
     else fieldMapName
+    val finalSchema : StructType = if (tableSchema.contains(",")) tableSchema
+    else if (tableSchema == "all")
+      readTables
+        .map(s => MySQLUtils
+          .getTableSchema(sparkSession, s))
+        .reduce((a,b) => {
+          var ret = new StructType()
+          var set : Set[String] = Set[String]()
+          for (f1 <- b) {
+            val name = mappingField.getOrElse(f1.name, f1.name)
+            if (!set.contains(name)) {
+              set += name
+              ret = ret.add(f1)
+            }
+          }
+          for (f1 <- a) {
+            val name = mappingField.getOrElse(f1.name, f1.name)
+            if (!set.contains(name)) {
+              set += name
+              ret = ret.add(f1)
+            }
+          }
+          MySQLUtils.schemaMapping(ret, mappingField)
+        })
+    else
+      MySQLUtils.getTableSchema(sparkSession, tableSchema)
+
+
+    println(finalSchema)
+
+    var dfOrigin : DataFrame = sparkSession.createDataFrame(sparkSession.sparkContext.emptyRDD[Row], finalSchema)
 
     for (i <- readTables.indices) {
       val tableName = readTables(i)
@@ -109,6 +136,7 @@ object Process {
       }
 
       dfOrigin = Union.dfMerge(dfOrigin, dfO)
+      jedis.getJedis.hset("processed", processName, tableName)
     }
     val af = Duplicate.duplicate(dfOrigin, jedis, idFieldName, duplicateOn : _*)
     af.show(10)
@@ -137,7 +165,7 @@ object Process {
       val ret = s.split(",")
       (ret(0), ret(1))
     }).toList
-    val relationshipName : List[String] = config.getString(s"relationship.tableName").split(",").toList
+    val relationshipName : List[String] = config.getString(s"relationship.names").split(",").toList
     for (i <- tableName.indices) {
       val df = MySQLUtils.openTable(sparkSession, tableName(i))
       val bak = Union.dfSelect(df, Seq(fieldPair(i)._1, fieldPair(i)._2))
@@ -160,6 +188,12 @@ object Process {
     MySQLUtils.saveCsv(wrt,s"/out/csv/$processName/")
     HDFSUtils.mergeFileByShell(s"/out/csv/$processName/*",s"/data/out/csv/${processName}_entity.csv")
   }
+
+  def resetProcess(jedisImplSer: JedisImplSer) : Unit = {
+    HDFSUtils.deleteFile(HDFSUtils.HDFSFileSystem, "/out/csv")
+    HDFSUtils.deleteFile(HDFSUtils.HDFSFileSystem, "/data/out")
+    JedisUtils.resetRedis(jedisImplSer.getJedis)
+  }
   def main(args: Array[String]): Unit = {
     val conf = ConfigFactory.load
     //init done
@@ -171,8 +205,11 @@ object Process {
     val host = conf.getString("redis.host")
     val port = conf.getString("redis.port")
     val process = conf.getString("process.mad.value")
+    val simpleProcess = conf.getString("process.simple.value")
     val jedis = new JedisImplSer(JedisUtils.buildRedisConf(host, port))
-    JedisUtils.resetRedis(jedis.getJedis)
+    resetProcess(jedis)
     process.split(",").foreach(str => processMergeAndDuplicate(str, sparkSession, conf, jedis))
+    simpleProcess.split(",").foreach(str => simpleTableProcess(str, sparkSession, conf, jedis))
+    relationshipProcess(sparkSession, conf, jedis)
   }
 }

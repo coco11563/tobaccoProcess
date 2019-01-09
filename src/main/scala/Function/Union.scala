@@ -1,10 +1,8 @@
 package Function
 
-import Function.Process.conf
-import org.apache.spark.rdd.RDD
-import utils.MySQLUtils._
-import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession}
+import org.apache.spark.sql.Column
 import utils.MySQLUtils
+import utils.MySQLUtils._
 
 //two table merge by some rules
 object Union {
