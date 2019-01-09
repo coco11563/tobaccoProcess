@@ -3,7 +3,6 @@ package Function
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, Row}
-import redis.clients.jedis.{Jedis, JedisCluster}
 import utils.{JedisImplSer, JedisUtils, MySQLUtils}
 
 //Map from table to table (relation record)
@@ -19,8 +18,23 @@ object Duplicate {
   }
 
   def Duplicate[T <: AnyVal](rdd : RDD[Row], keyFieldName : String, schema : StructType, fields : String*) : RDD[(Map[T, T], Row)] = ???
+
   def DuplicateMerge[T <: AnyVal] (rdd : Iterable[(T, Row)]) : (Map[T,T], Row) = ???
-  def DuplicateBiasMerge[T <: AnyVal] (rdd : Iterable[(T, Row)], biasFunction : Row => Double) : (Map[T,T], Row) = ???
+
+  def DuplicateBiasMerge[T <: AnyVal] (rdd : Iterable[(T, String, Row)], biasFunction : T => Double, jedis: JedisImplSer) : Row = {
+    var f = rdd.head //rows length >= 1
+    if (rdd.size < 2) return f._3 //only one elem
+    for (row <- rdd) {
+      if (biasFunction(row._1) > biasFunction(f._1)) {
+        jedis.getJedis.set(f._2, row._2) //set son -> father(1 -> 1)
+        f = (row._1, row._2, dupRowMerge(f._3, row._3))
+      } else {
+        jedis.getJedis.set(row._2, f._2) //set son -> father(1 -> 1)
+        f = (f._1, f._2, dupRowMerge(row._3, f._3))
+      }
+    }
+    f._3
+  }
 
   def recordAndDuplicate(rows: Iterable[(String, Row)], jedis: JedisImplSer) :Row = {
     var f = rows.head //rows length >= 1
