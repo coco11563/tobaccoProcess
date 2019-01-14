@@ -52,13 +52,14 @@ object Process {
     * the fields need mapping
     * $.mapping.toField =>
     * the after mapping field
-    *
+    * $.redis.recordName =>
+    * the field we need to generate the splice record
     * @param processName
     * @param sparkSession
     * @param config
     * @param jedis
     */
-  def processMergeAndDuplicate(processName : String, sparkSession: SparkSession, config: Config, jedis: JedisImplSer) : Unit = {
+  def processMergeAndDuplicateWithRedisRecord(processName : String, sparkSession: SparkSession, config: Config, jedis: JedisImplSer) : (String, DataFrame) = {
     val readTables : List[String] = config
       .getString(s"$processName.item.tableNames").split(",").toList
     val needFields : List[String] = config
@@ -75,6 +76,8 @@ object Process {
       .getString(s"$processName.item.outName")
     val mappingTable : Boolean = config
       .getBoolean(s"$processName.mapping.isNeed")
+    val recordRedisName : String = config
+      .getString(s"$processName.redis.recordName")
 
     val mappingField : Map[String,String] =
       if (fieldMapName == "") Map[String,String]()
@@ -139,11 +142,14 @@ object Process {
       jedis.getJedis.hset("processed", processName, tableName)
     }
     val af = Duplicate.duplicate(dfOrigin, jedis, idFieldName, duplicateOn : _*)
+    println("init the record redis cache")
+    println(s"starting at ${System.currentTimeMillis()}")
+    JedisUtils.keyFieldPersist(af, jedis, processName, idFieldName, recordRedisName)
     af.show(10)
     MySQLUtils.saveCsv(af,s"/out/csv/$processName/")
     HDFSUtils.mergeFileByShell(s"/out/csv/$processName/*",s"/data/out/csv/${processName}_entity.csv")
+    (processName, af)
   }
-
 
   def mapping(processName : String, sparkSession: SparkSession, rows:RDD[Row], mapIndex : Int): RDD[Row] = {
     val mappingTableName = conf.getString(s"$processName.mapping.table")
@@ -159,32 +165,50 @@ object Process {
     rows.map(r => MySQLUtils.rowMappingValue(r, mapIndex, mapping.value))
   }
 
-  def relationshipProcess(sparkSession: SparkSession, config: Config, jedis: JedisImplSer) : Unit ={
-    val tableName :List[String] = config.getString(s"relationship.tableNames").split(",").toList
-    val fieldPair : List[(String,String)] = config.getString(s"relationship.fieldPairs").split(";").map(s => {
+  def relationshipProcess(processName : String, sparkSession: SparkSession
+                          , config: Config, jedis: JedisImplSer) : (String, DataFrame) ={
+    if (!config.getBoolean(s"$processName.relationship.needProcess")) return (null, null)
+
+    val tableName :List[String] = config.getString(s"$processName.relationship.tableNames").split(",").toList
+    val fieldPair : List[(String,String)] = config.getString(s"$processName.relationship.fieldPairs").split(";").map(s => {
       val ret = s.split(",")
       (ret(0), ret(1))
     }).toList
-    val relationshipName : List[String] = config.getString(s"relationship.names").split(",").toList
+//    val relationshipName : List[String] = config.getString(s"$processName.relationship.names").split(",").toList
+    val schema : StructType = new StructType()
+      .add("from",StringType, nullable = false)
+      .add("to",StringType, nullable = false)
+    var emptyDF = sparkSession.createDataFrame(sparkSession.sparkContext.emptyRDD[Row], schema)
     for (i <- tableName.indices) {
       val df = MySQLUtils.openTable(sparkSession, tableName(i))
       val bak = Union.dfSelect(df, Seq(fieldPair(i)._1, fieldPair(i)._2))
-      val schema = bak.schema
       val rdd = bak.rdd.map(r => {Row.fromSeq(r.toSeq.map(a => Duplicate.fkWash(a.asInstanceOf[String], jedis)))})
       val table = sparkSession.createDataFrame(rdd, schema)
-      MySQLUtils.saveCsv(table,s"/out/csv/${relationshipName(i)}/")
-      HDFSUtils.mergeFileByShell(s"/out/csv/${relationshipName(i)}/*",s"/data/out/csv/m_${relationshipName(i)}.csv")
+      emptyDF = Union.dfMerge(emptyDF, table)
     }
+    println("init the record redis cache")
+    println(s"starting at ${System.currentTimeMillis()}")
+    JedisUtils.relationPersist(emptyDF, jedis, processName)
+    println(s"ending at ${System.currentTimeMillis()}")
+    MySQLUtils.saveCsv(emptyDF,s"/out/csv/$processName/rel")
+    HDFSUtils.mergeFileByShell(s"/out/csv/$processName/rel/*",s"/data/out/csv/${processName}_relationship.csv")
+    (processName, emptyDF)
   }
 
-  def simpleTableProcess(processName : String, sparkSession: SparkSession, config: Config, jedisImplSer: JedisImplSer) :Unit = {
+  def simpleTableProcessWithRedisRecord(processName : String, sparkSession: SparkSession,
+                                        config: Config, jedisImplSer: JedisImplSer) :Unit = {
     val tableName : String = config.getString(s"$processName.item.tableName")
     val needField : Seq[String] = config.getString(s"$processName.item.tableFields").split(",").toSeq
     val dupField : Array[String] = config.getString(s"$processName.item.duplicateField").split(",")
+    val recordRedisName : String = config
+      .getString(s"$processName.redis.recordName")
     val id : String =  config.getString(s"$processName.item.idField")
     val df = MySQLUtils.openTable(sparkSession, tableName)
     val bak = Union.dfSelect(df, needField)
     val wrt = Duplicate.duplicate(bak, jedisImplSer, id, dupField : _*)
+    println("init the record redis cache")
+    println(s"starting at ${System.currentTimeMillis()}")
+    JedisUtils.keyFieldPersist(wrt, jedisImplSer, processName, id, recordRedisName)
     MySQLUtils.saveCsv(wrt,s"/out/csv/$processName/")
     HDFSUtils.mergeFileByShell(s"/out/csv/$processName/*",s"/data/out/csv/${processName}_entity.csv")
   }
@@ -208,8 +232,14 @@ object Process {
     val simpleProcess = conf.getString("process.simple.value")
     val jedis = new JedisImplSer(JedisUtils.buildRedisConf(host, port))
     resetProcess(jedis)
-    process.split(",").foreach(str => processMergeAndDuplicate(str, sparkSession, conf, jedis))
-    simpleProcess.split(",").foreach(str => simpleTableProcess(str, sparkSession, conf, jedis))
-    relationshipProcess(sparkSession, conf, jedis)
+    process.split(",").foreach(str => {
+      processMergeAndDuplicateWithRedisRecord(str, sparkSession, conf, jedis)
+      relationshipProcess(str, sparkSession, conf, jedis)
+    })
+    simpleProcess.split(",").foreach(str => {
+      simpleTableProcessWithRedisRecord(str, sparkSession, conf, jedis)
+      relationshipProcess(str, sparkSession, conf, jedis)
+    })
+
   }
 }

@@ -47,7 +47,7 @@ object Duplicate {
   }
 
   def dupRowMerge(rows : Row*) : Row = {
-    var f = rows.head //rows length >= 1
+    val f = rows.head //rows length >= 1
     if (rows.length < 2) return f //only one elem
     var father = f.toSeq.toArray
     for (index <- 1 until rows.length) {
