@@ -53,18 +53,18 @@ object JedisUtils {
 
   // new
   def keyFieldPersist(df : DataFrame, jedisImplSer: JedisImplSer, fieldName : String
-                      , idName :String, fields : String *) : Unit = {
+                      , idName :String, field : String) : Unit = {
     val schema = df.schema
-    val index = fields.map(s => schema.indexOf(s))
-    val idIndex = schema.indexOf(idName)
+    println(s"schema is $schema")
+    val index = schema.fieldIndex(field)
+    println(s"$field's index is $index")
+    val idIndex = schema.fieldIndex(idName)
+    println(s"$idName's index is $idIndex")
     val rdd = df.rdd
     rdd
-      .map(r => (r.getAs[String](idName),
-        index
-          .map(i => r.getAs[String](i))
-          .reduce(_ + "|" + _)))
+      .map(r => (r.getAs[String](idIndex), r.getAs[String](index)))
       .foreach(str => {
-        jedisImplSer.getJedis.hset(str._1,fieldName ,str._2)
+        jedisImplSer.getJedis.hset(str._1 + "hset", fieldName ,str._1 + "|" + str._2)
       })
   }
   // new
@@ -73,26 +73,26 @@ object JedisUtils {
       .foreach(r => {
         val key = r.getAs[String](0)
         val value = r.getAs[String](1)
-        val map = jedisImplSer.getJedis.hgetAll(key)
-        if (map == null) jedisImplSer.getJedis.hmset(key, Map[String,String](fieldName, value))
+        val map = jedisImplSer.getJedis.hgetAll(key + "hmset")
+        if (map.isEmpty) jedisImplSer.getJedis.hmset(key+ "hmset", Map[String,String](fieldName-> value))
         else {
           val old = map.get(fieldName)
-          if (old == null) {
+          if (old.isEmpty) {
             map.put(fieldName, value)
           } else {
             map.put(fieldName, value + "," + old)
           }
-          jedisImplSer.getJedis.hmset(key, map)
+          jedisImplSer.getJedis.hmset(key + "hmset", map)
         }
       })
   }
   // new
   def getKeyField(jedisImplSer: JedisImplSer, key : String, field : String) : String = {
-    val keys = jedisImplSer.getJedis.hmget(key, field)(0)
+    val keys = jedisImplSer.getJedis.hmget(key + "hmset", field)(0)
     if (keys == null) null
     else {
       val list = keys.split(",")
-      list.map(str => jedisImplSer.getJedis.hget(str, field)).reduce(_ + "," + _)
+      list.map(str => jedisImplSer.getJedis.hget(str + "hset", field)).reduce(_ + "," + _)
     }
   }
 

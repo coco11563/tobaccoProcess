@@ -224,9 +224,13 @@ object MySQLUtils {
     df.write
       .option("header","true")
       .option("delimiter","\t")
-      .option("quoteMode", "NON_NUMERIC")
+      .option("quoteMode", "ALL")
       .option("quote","\"")
       .csv(outName)
+  }
+  def saveJson(df : MySQLTable, outName : String ) : Unit = {
+    df.write
+      .json(outName)
   }
   def saveTable(df : MySQLTable, table: String,
                mode : SaveMode): Unit = {
@@ -239,4 +243,23 @@ object MySQLUtils {
     saveTable(df, table, serverUrl, driverType, prop, mode)
   }
 
+  def washForCsv(df : MySQLTable) : MySQLTable = {
+    val schema = df.schema
+    var rdd = df.rdd
+    for (field <- schema) {
+      rdd = if (field.dataType == StringType) {
+        val index = schema.fieldIndex(field.name)
+        rdd.map(r => {
+          var changeValue = r.getString(index)
+            if (changeValue != null) {
+              changeValue = changeValue
+                .replaceAll("\r", " ")
+                .replaceAll("\n", " ")
+            }
+          rowChangeValue(r, index, changeValue)
+        })
+      } else rdd
+    }
+    df.sparkSession.createDataFrame(rdd, schema)
+  }
 }
