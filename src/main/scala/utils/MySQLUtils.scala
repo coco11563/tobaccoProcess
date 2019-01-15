@@ -242,7 +242,8 @@ object MySQLUtils {
     prop.put("password", passwd)
     saveTable(df, table, serverUrl, driverType, prop, mode)
   }
-
+  // test passing
+  // remove the illegal char
   def washForCsv(df : MySQLTable) : MySQLTable = {
     val schema = df.schema
     var rdd = df.rdd

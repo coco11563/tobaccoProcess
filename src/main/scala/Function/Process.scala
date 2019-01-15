@@ -231,10 +231,17 @@ object Process {
   // -> read m_table_complement -> hashing two table
   // -> get differ field -> build final field
   // -> final MTable)
-  def finalMTableBuild(processName : String, path : String, sparkSession: SparkSession, config: Config) : Unit = {
-
+  def finalMTableBuild(processName : String,
+                       path : String, sparkSession: SparkSession, config: Config) : Unit = {
+    val csvDF =sparkSession
+      .sqlContext.read
+      .format("csv")
+      .option("header", "true")
+      .option("delimiter","\t")
+      .option("quote","\"")
+      .load(path)
+    val weavingFile = config.getString("")
   }
-
   def main(args: Array[String]): Unit = {
     val conf = ConfigFactory.load
     //init done
@@ -259,7 +266,5 @@ object Process {
       simpleTableProcessWithRedisRecord(str, sparkSession, conf, jedis)
 //      relationshipProcess(str, sparkSession, conf, jedis)
     })
-
   }
-
 }

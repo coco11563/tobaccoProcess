@@ -52,6 +52,9 @@ object JedisUtils {
   }
 
   // new
+  // 127.0.0.1:6379> hget 0b78f337788d450f86e8530f63d8d9d3hset fruit
+  // "0b78f337788d450f86e8530f63d8d9d3|\xe4\xbd\x8e\xe4\xbe\xa7\xe6\xb5\x81\xe7\x83\x9f\xe6\xb0\x94\xe5\x8d\xb7\xe7\x83\x9f"
+  // test pass
   def keyFieldPersist(df : DataFrame, jedisImplSer: JedisImplSer, fieldName : String
                       , idName :String, field : String) : Unit = {
     val schema = df.schema
